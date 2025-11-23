@@ -1,4 +1,4 @@
-name: Build passwall2 with sing-box & xray (mt7621 release)
+name: Debug Build passwall2 (mt7621 release)
 
 on:
   workflow_dispatch:
@@ -43,28 +43,19 @@ jobs:
 
           ./scripts/feeds clean
           ./scripts/feeds update -a
-          ./scripts/feeds install luci-app-passwall2 sing-box xray-core golang
+          ./scripts/feeds install luci-app-passwall2 golang
 
       - name: Config packages (non-interactive)
         working-directory: sdk
         run: |
           echo "CONFIG_PACKAGE_luci-app-passwall2=y" > .config
-          echo "CONFIG_PACKAGE_sing-box=y" >> .config
-          echo "CONFIG_PACKAGE_xray-core=y" >> .config
           echo "CONFIG_PACKAGE_golang=y" >> .config
           make defconfig
 
-      - name: Build golang host
-        working-directory: sdk
-        run: |
-          make package/golang/host-compile V=s -j1
-
-      - name: Build packages
+      - name: Build passwall2 only
         working-directory: sdk
         run: |
           make package/luci-app-passwall2/compile V=s -j$(nproc)
-          make package/sing-box/compile V=s -j$(nproc)
-          make package/xray-core/compile V=s -j$(nproc)
 
       - name: Collect artifacts
         working-directory: sdk
@@ -75,5 +66,5 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: passwall2-singbox-xray
+          name: passwall2-debug
           path: artifacts
