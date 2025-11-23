@@ -5,6 +5,7 @@ on:
 
 env:
   TZ: Asia/Shanghai
+  TERM: xterm   # 避免 menuconfig 报错
 
 jobs:
   build:
@@ -44,18 +45,19 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install luci-app-passwall2 sing-box xray-core golang
 
-      - name: Build golang host
-        working-directory: sdk
-        run: |
-          make package/golang/host-compile V=s -j1
-
-      - name: Config packages
+      - name: Config packages (non-interactive)
         working-directory: sdk
         run: |
           echo "CONFIG_PACKAGE_luci-app-passwall2=y" > .config
           echo "CONFIG_PACKAGE_sing-box=y" >> .config
           echo "CONFIG_PACKAGE_xray-core=y" >> .config
+          echo "CONFIG_PACKAGE_golang=y" >> .config
           make defconfig
+
+      - name: Build golang host
+        working-directory: sdk
+        run: |
+          make package/golang/host-compile V=s -j1
 
       - name: Build packages
         working-directory: sdk
