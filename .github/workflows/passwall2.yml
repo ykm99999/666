@@ -1,4 +1,4 @@
-name: Build passwall2 with sing-box & xray
+name: Build passwall2 with sing-box & xray (mt7621 release)
 
 on:
   workflow_dispatch:
@@ -21,22 +21,20 @@ jobs:
             build-essential gawk unzip wget git libncurses5-dev zlib1g-dev libssl-dev \
             python3 perl rsync file pkg-config gettext xsltproc ccache cmake ninja-build
 
-      - name: Download snapshot SDK (ramips/mt7621)
+      - name: Download release SDK (23.05.3, ramips/mt7621)
         run: |
-          BASE="https://downloads.openwrt.org/snapshots/targets/ramips/mt7621/"
-          # 从 sha256sums 文件解析真实 SDK 文件名
-          SDK_FILE=$(curl -fsSL ${BASE}sha256sums | grep -oE 'openwrt-sdk-[^ ]*Linux-x86_64\.tar\.xz' | head -n1 || true)
+          BASE="https://downloads.openwrt.org/releases/23.05.3/targets/ramips/mt7621/"
+          SDK_FILE=$(curl -fsSL ${BASE}sha256sums | grep -oE 'openwrt-sdk-[^ ]*Linux-x86_64\.tar\.xz' | head -n1)
           echo "SDK_FILE=${SDK_FILE}"
-          if [ -z "${SDK_FILE}" ]; then
-            echo "❌ 没找到 SDK 文件，请检查目录页面"
-            exit 1
-          fi
           wget ${BASE}${SDK_FILE} -O sdk.tar.xz
           mkdir sdk && tar -xf sdk.tar.xz -C sdk --strip-components=1
 
       - name: Setup feeds
         working-directory: sdk
         run: |
+          # 对齐 feeds 到 release 分支
+          echo "src-git luci https://github.com/openwrt/luci;openwrt-23.05" >> feeds.conf.default
+          echo "src-git packages https://github.com/openwrt/packages;openwrt-23.05" >> feeds.conf.default
           echo "src-git passwall2 https://github.com/xiaorouji/openwrt-passwall2" >> feeds.conf.default
           echo "src-git pwpackages https://github.com/xiaorouji/openwrt-passwall-packages" >> feeds.conf.default
 
