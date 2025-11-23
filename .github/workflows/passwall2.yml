@@ -42,7 +42,12 @@ jobs:
 
           ./scripts/feeds clean
           ./scripts/feeds update -a
-          ./scripts/feeds install -a
+          ./scripts/feeds install luci-app-passwall2 sing-box xray-core golang
+
+      - name: Build golang host
+        working-directory: sdk
+        run: |
+          make package/golang/host-compile V=s -j1
 
       - name: Config packages
         working-directory: sdk
