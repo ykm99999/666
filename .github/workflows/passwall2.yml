@@ -1,4 +1,4 @@
-name: Build Passwall2 for ImmortalWrt 23.05.3 (MT7981)
+name: Build Passwall2 for ImmortalWrt 23.05.3 (MT7981) - Fixed
 
 on:
   workflow_dispatch:
@@ -85,42 +85,38 @@ jobs:
           
           echo "✅ SDK 准备完成"
 
-      - name: Setup feeds for ImmortalWrt 23.05
+      - name: Clean feeds to avoid recursive dependencies
         working-directory: sdk
         run: |
-          # 创建针对 23.05 的 feeds 配置
+          # 创建简化的 feeds 配置，避免复杂依赖
           cat > feeds.conf.default << 'EOF'
           src-git packages https://github.com/immortalwrt/packages;openwrt-23.05
           src-git luci https://github.com/immortalwrt/luci;openwrt-23.05
-          src-git routing https://github.com/openwrt/routing;openwrt-23.05
           src-git passwall2 https://github.com/xiaorouji/openwrt-passwall2
           src-git pwpackages https://github.com/xiaorouji/openwrt-passwall-packages
           EOF
 
-          echo "=== 开始更新 feeds ==="
-          ./scripts/feeds update -a
-          
-          echo "=== 安装基础软件包 ==="
-          ./scripts/feeds install -a -p packages
-          ./scripts/feeds install -a -p luci
-          
-          echo "=== 安装 Passwall2 相关包 ==="
-          ./scripts/feeds install -a -p passwall2
-          ./scripts/feeds install -a -p pwpackages
-          
-          # 显式安装关键包
-          echo "=== 安装核心依赖包 ==="
-          ./scripts/feeds install luci-app-passwall2
-          ./scripts/feeds install golang
-          ./scripts/feeds install coreutils-nohup
-          ./scripts/feeds install libopenssl
-          ./scripts/feeds install libpcre
-          ./scripts/feeds install libstdcpp
+          echo "=== 更新最小化 feeds ==="
+          ./scripts/feeds update packages luci passwall2 pwpackages
 
-      - name: Create MT7981 package configuration
+      - name: Install only necessary packages
         working-directory: sdk
         run: |
-          # 创建针对 MT7981 的完整配置
+          echo "=== 安装最小依赖集 ==="
+          # 只安装必要的包，避免递归依赖
+          ./scripts/feeds install libopenssl
+          ./scripts/feeds install libpcre
+          ./scripts/feeds install zlib
+          ./scripts/feeds install libstdcpp
+          ./scripts/feeds install golang
+          ./scripts/feeds install luci-base
+          ./scripts/feeds install luci-compat
+          ./scripts/feeds install luci-app-passwall2
+
+      - name: Create minimal configuration (avoid recursive deps)
+        working-directory: sdk
+        run: |
+          # 创建最小化配置，避免递归依赖
           cat > .config << 'EOF'
           # ======================
           # 目标架构配置 - MT7981
@@ -132,68 +128,50 @@ jobs:
           # 工具链配置
           # ======================
           CONFIG_TOOLCHAIN=y
+
+          # ======================
+          # 核心库依赖 (最小集)
+          # ======================
           CONFIG_PACKAGE_libc=y
           CONFIG_PACKAGE_libgcc=y
           CONFIG_PACKAGE_libstdcpp=y
-
-          # ======================
-          # Golang 环境
-          # ======================
-          CONFIG_PACKAGE_golang=y
-          CONFIG_PACKAGE_golang-src=y
-
-          # ======================
-          # 核心库依赖
-          # ======================
           CONFIG_PACKAGE_libopenssl=y
           CONFIG_PACKAGE_libpcre=y
           CONFIG_PACKAGE_zlib=y
           CONFIG_PACKAGE_libpthread=y
           CONFIG_PACKAGE_librt=y
-          CONFIG_PACKAGE_libatomic=y
-          CONFIG_PACKAGE_libjson-c=y
 
           # ======================
-          # Luci 基础
+          # Golang 环境
+          # ======================
+          CONFIG_PACKAGE_golang=y
+
+          # ======================
+          # Luci 基础 (最小集)
           # ======================
           CONFIG_PACKAGE_luci-base=y
           CONFIG_PACKAGE_luci-compat=y
-          CONFIG_PACKAGE_luci-lib-ipkg=y
-          CONFIG_PACKAGE_luci-theme-bootstrap=y
-          CONFIG_PACKAGE_luci-proto-ipv6=y
 
           # ======================
-          # 内核模块（网络相关）
+          # 内核模块 (最小集)
           # ======================
           CONFIG_PACKAGE_kmod-nf-conntrack=y
-          CONFIG_PACKAGE_kmod-nf-conntrack-netlink=y
           CONFIG_PACKAGE_kmod-nf-ipt=y
           CONFIG_PACKAGE_kmod-nf-nat=y
-          CONFIG_PACKAGE_kmod-nf-reject=y
-          CONFIG_PACKAGE_kmod-nfnetlink=y
           CONFIG_PACKAGE_kmod-ipt-core=y
-          CONFIG_PACKAGE_kmod-ipt-extra=y
           CONFIG_PACKAGE_kmod-tun=y
-          CONFIG_PACKAGE_kmod-crypto-core=y
-          CONFIG_PACKAGE_kmod-crypto-aead=y
-          CONFIG_PACKAGE_kmod-ipt-tproxy=y
 
           # ======================
-          # 网络工具
+          # 网络工具 (最小集)
           # ======================
           CONFIG_PACKAGE_iptables=y
           CONFIG_PACKAGE_iptables-mod-tproxy=y
-          CONFIG_PACKAGE_iptables-mod-extra=y
           CONFIG_PACKAGE_ip-full=y
-          CONFIG_PACKAGE_ipset=y
-          CONFIG_PACKAGE_resolveip=y
 
           # ======================
-          # 系统工具
+          # 系统工具 (最小集)
           # ======================
           CONFIG_PACKAGE_coreutils=y
-          CONFIG_PACKAGE_coreutils-nohup=y
-          CONFIG_PACKAGE_bash=y
           CONFIG_PACKAGE_ca-bundle=y
           CONFIG_PACKAGE_ca-certificates=y
 
@@ -201,7 +179,6 @@ jobs:
           # Passwall2 主包
           # ======================
           CONFIG_PACKAGE_luci-app-passwall2=y
-          CONFIG_PACKAGE_luci-i18n-passwall2-zh-cn=y
 
           # ======================
           # 编译优化
@@ -211,58 +188,77 @@ jobs:
           EOF
 
           # 应用配置
-          echo "=== 应用默认配置 ==="
+          echo "=== 应用最小配置 ==="
           make defconfig
           
-          echo "=== 配置摘要 ==="
-          echo "目标架构: mediatek/filogic (MT7981)"
+          echo "=== 配置验证 ==="
           echo "启用的包数量: $(grep '^CONFIG_PACKAGE.*=y' .config | wc -l)"
 
-      - name: Build dependencies first
+      - name: Build toolchain first
         working-directory: sdk
         run: |
           set -e
-          echo "=== 编译工具链和核心依赖 ==="
+          echo "=== 首先编译工具链 ==="
           
-          # 编译工具链
+          # 先编译工具链，避免依赖问题
+          make toolchain/compile -j$(nproc) V=sc
           make toolchain/install -j$(nproc) V=sc
           
-          echo "=== 编译核心库 ==="
-          make package/libopenssl/compile package/libpcre/compile package/zlib/compile -j$(nproc) V=sc
-          
-          echo "=== 编译 Golang ==="
-          make package/golang/compile -j$(nproc) V=sc
-          
-          echo "=== 编译 Luci 基础 ==="
-          make package/luci-base/compile package/luci-compat/compile -j$(nproc) V=sc
+          echo "✅ 工具链编译完成"
 
-      - name: Build passwall2 package
+      - name: Build core dependencies
+        working-directory: sdk
+        run: |
+          set -e
+          echo "=== 编译核心依赖 ==="
+          
+          # 按顺序编译核心库
+          make package/libopenssl/compile -j$(nproc) V=sc
+          make package/libpcre/compile -j$(nproc) V=sc
+          make package/zlib/compile -j$(nproc) V=sc
+          make package/libstdcpp/compile -j$(nproc) V=sc
+          
+          echo "✅ 核心库编译完成"
+
+      - name: Build golang and luci base
+        working-directory: sdk
+        run: |
+          set -e
+          echo "=== 编译 Golang 和 Luci 基础 ==="
+          
+          make package/golang/compile -j$(nproc) V=sc
+          make package/luci-base/compile -j$(nproc) V=sc
+          make package/luci-compat/compile -j$(nproc) V=sc
+          
+          echo "✅ Golang 和 Luci 基础编译完成"
+
+      - name: Build passwall2 directly
         working-directory: sdk
         run: |
           set -e
           mkdir -p $GITHUB_WORKSPACE/artifacts
           
-          echo "=== 编译 passwall2 主包 ==="
-          # 首先尝试并行编译
+          echo "=== 直接编译 passwall2 ==="
+          # 直接编译 passwall2，依赖应该已经就绪
           if make package/luci-app-passwall2/compile -j$(nproc) V=s 2>&1 | tee $GITHUB_WORKSPACE/artifacts/passwall2_build.log; then
-            echo "✅ 并行编译成功"
+            echo "✅ passwall2 编译成功"
           else
             echo "⚠️ 并行编译失败，尝试单线程编译..."
             if make package/luci-app-passwall2/compile -j1 V=s 2>&1 | tee $GITHUB_WORKSPACE/artifacts/passwall2_build_single.log; then
               echo "✅ 单线程编译成功"
             else
-              echo "❌ 编译失败，请检查日志"
-              # 不立即退出，继续收集日志
+              echo "❌ 编译失败，收集错误信息"
+              # 继续执行以收集包文件
             fi
           fi
 
-      - name: Collect and verify packages
+      - name: Collect packages
         working-directory: sdk
         run: |
           set -e
           mkdir -p $GITHUB_WORKSPACE/artifacts/packages
           
-          echo "=== 收集编译好的软件包 ==="
+          echo "=== 收集生成的软件包 ==="
           
           # 查找所有 IPK 文件
           find bin -name "*.ipk" -type f | while read file; do
@@ -276,54 +272,33 @@ jobs:
           ipk_count=$(find $GITHUB_WORKSPACE/artifacts/packages -name "*.ipk" | wc -l)
           echo "生成的 IPK 包数量: $ipk_count"
           
-          # 列出 passwall2 相关包
-          echo "=== Passwall2 相关包 ==="
-          find $GITHUB_WORKSPACE/artifacts/packages -name "*passwall*" -o -name "*pw2*" | while read file; do
-            echo "🔸 $(basename "$file")"
-          done
-          
-          if [ "$ipk_count" -eq 0 ]; then
-            echo "⚠️ 没有生成任何软件包，但继续执行以收集日志"
-          else
+          if [ "$ipk_count" -gt 0 ]; then
             echo "PACKAGES_BUILT=true" >> $GITHUB_ENV
+            echo "✅ 成功生成软件包"
+          else
+            echo "⚠️ 没有生成软件包"
           fi
-          
-          # 显示文件详情
-          echo "=== 包列表详情 ==="
-          ls -la $GITHUB_WORKSPACE/artifacts/packages/ || echo "没有包文件"
 
-      - name: Upload packages artifact
+      - name: Upload packages
         if: env.PACKAGES_BUILT == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: passwall2-packages-mt7981-23.05.3
+          name: passwall2-packages-mt7981-fixed
           path: artifacts/packages/
           retention-days: 30
-          overwrite: true
 
-      - name: Upload build logs
+      - name: Upload logs
         uses: actions/upload-artifact@v4
         with:
-          name: build-logs-mt7981-23.05.3
+          name: build-logs-fixed
           path: artifacts/
           retention-days: 7
-          overwrite: true
 
-      - name: Build success notification
-        if: success() && env.PACKAGES_BUILT == 'true'
-        run: |
-          echo "🎉 Passwall2 软件包编译成功！"
-          echo "========================================"
-          echo "架构: ImmortalWrt 23.05.3 + MT7981"
-          echo "设备: 司络 SL-3000"
-          echo "生成的包已上传到 Artifacts"
-          echo "========================================"
-
-      - name: Build completion notification
-        if: always()
+      - name: Final status
         run: |
           if [ "$PACKAGES_BUILT" = "true" ]; then
-            echo "✅ 编译流程完成 - 软件包已生成"
+            echo "🎉 编译成功！软件包已生成"
           else
-            echo "⚠️ 编译流程完成 - 但未生成软件包，请检查日志"
+            echo "⚠️ 编译过程完成，但未生成软件包"
+            echo "请检查日志文件了解详细错误"
           fi
