@@ -21,11 +21,21 @@ jobs:
         git clone https://github.com/openwrt/openwrt.git
         cd openwrt
         git checkout v24.10.4
-        # 删除 telephony 和 routing feed，避免报错
+        # 删除 telephony 和 routing feed
         sed -i '/telephony/d' feeds.conf.default
         sed -i '/routing/d' feeds.conf.default
         ./scripts/feeds update -a
         ./scripts/feeds install -a
+
+    - name: Remove unsupported packages
+      run: |
+        cd openwrt
+        rm -rf feeds/luci/applications/luci-app-bmx7*
+        rm -rf feeds/luci/applications/luci-app-olsr*
+        rm -rf feeds/luci/applications/luci-app-babeld*
+        rm -rf feeds/luci/proto/luci-proto-batman-adv*
+        rm -rf feeds/packages/bmx7*
+        rm -rf feeds/packages/prometheus-node-exporter-lua
 
     - name: Copy custom config
       run: |
@@ -48,7 +58,7 @@ jobs:
       run: |
         cd openwrt
         make defconfig
-        make -j1 V=s   # 单线程编译，输出详细日志
+        make -j1 V=s   # 单线程编译，详细日志
 
     - name: Upload firmware
       uses: actions/upload-artifact@v4
