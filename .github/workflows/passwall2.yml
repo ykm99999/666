@@ -1,73 +1,126 @@
-name: Minimal Build passwall2 (mt7621 release)
+- name: Create package-only configuration
+  working-directory: sdk
+  run: |
+    # 创建专门用于软件包编译的配置
+    cat > .config << 'EOF'
+    # ======================
+    # 目标架构配置
+    # ======================
+    CONFIG_TARGET_ramips=y
+    CONFIG_TARGET_ramips_mt7621=y
+    CONFIG_TARGET_ramips_mt7621_DEVICE_xiaomi_mi-router-4a-gigabit=y
 
-on:
-  workflow_dispatch:
+    # ======================
+    # 工具链配置
+    # ======================
+    CONFIG_TOOLCHAIN=y
+    CONFIG_TOOLCHAIN_LIBC="musl"
+    CONFIG_GCC_USE_GRAPHITE=y
+    CONFIG_GCC_USE_VERSION_11=y
 
-env:
-  TZ: Asia/Shanghai
-  TERM: xterm   # 避免 menuconfig 报错
+    # ======================
+    # 基础系统包（最小集）
+    # ======================
+    CONFIG_PACKAGE_libc=y
+    CONFIG_PACKAGE_libgcc=y
+    CONFIG_PACKAGE_libpthread=y
+    CONFIG_PACKAGE_librt=y
+    CONFIG_PACKAGE_libstdcpp=y
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
+    # ======================
+    # 核心库依赖
+    # ======================
+    CONFIG_PACKAGE_libopenssl=y
+    CONFIG_PACKAGE_libopenssl-conf=y
+    CONFIG_PACKAGE_libpcre=y
+    CONFIG_PACKAGE_zlib=y
+    CONFIG_PACKAGE_libuuid=y
+    CONFIG_PACKAGE_libjson-c=y
+    CONFIG_PACKAGE_libcurl=y
+    CONFIG_PACKAGE_libevent2=y
+    CONFIG_PACKAGE_libatomic=y
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    # ======================
+    # Golang 环境
+    # ======================
+    CONFIG_PACKAGE_golang=y
+    CONFIG_PACKAGE_golang-src=y
+    CONFIG_GOLANG_EXTERNAL_BOOTSTRAP_ROOT=""
+    CONFIG_GOLANG_BUILD_CACHE_DIR="/tmp/go-build"
+    CONFIG_GOLANG_MOD_CACHE_WORKAROUND=y
 
-      - name: Install build deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential gawk unzip wget git libncurses5-dev zlib1g-dev libssl-dev \
-            python3 perl rsync file pkg-config gettext xsltproc ccache cmake ninja-build
+    # ======================
+    # 网络基础库
+    # ======================
+    CONFIG_PACKAGE_libnetfilter-conntrack=y
+    CONFIG_PACKAGE_libnfnetlink=y
+    CONFIG_PACKAGE_libmnl=y
+    CONFIG_PACKAGE_iptables-mod-extra=y
+    CONFIG_PACKAGE_iptables-mod-tproxy=y
 
-      - name: Download release SDK (23.05.3, ramips/mt7621)
-        run: |
-          BASE="https://downloads.openwrt.org/releases/23.05.3/targets/ramips/mt7621/"
-          SDK_FILE=$(curl -fsSL ${BASE}sha256sums | grep -oE 'openwrt-sdk-[^ ]*Linux-x86_64\.tar\.xz' | head -n1)
-          wget ${BASE}${SDK_FILE} -O sdk.tar.xz
-          mkdir sdk && tar -xf sdk.tar.xz -C sdk --strip-components=1
+    # ======================
+    # Luci 基础（passwall2 依赖）
+    # ======================
+    CONFIG_PACKAGE_luci-base=y
+    CONFIG_PACKAGE_luci-compat=y
+    CONFIG_PACKAGE_luci-lib-ipkg=y
+    CONFIG_PACKAGE_luci-lib-nixio=y
+    CONFIG_PACKAGE_luci-proto-ipv6=y
+    CONFIG_PACKAGE_luci-theme-bootstrap=y
 
-      - name: Setup feeds (minimal)
-        working-directory: sdk
-        run: |
-          # 替换 luci 和 packages 行
-          sed -i 's|src-git luci .*|src-git luci https://github.com/openwrt/luci;openwrt-23.05|' feeds.conf.default
-          sed -i 's|src-git packages .*|src-git packages https://github.com/openwrt/packages;openwrt-23.05|' feeds.conf.default
+    # ======================
+    # 内核模块（网络相关）
+    # ======================
+    CONFIG_PACKAGE_kmod-crypto-core=y
+    CONFIG_PACKAGE_kmod-crypto-aead=y
+    CONFIG_PACKAGE_kmod-crypto-manager=y
+    CONFIG_PACKAGE_kmod-crypto-pcompress=y
+    CONFIG_PACKAGE_kmod-crypto-sha1=y
+    CONFIG_PACKAGE_kmod-ipt-core=y
+    CONFIG_PACKAGE_kmod-ipt-extra=y
+    CONFIG_PACKAGE_kmod-nf-conntrack=y
+    CONFIG_PACKAGE_kmod-nf-conntrack-netlink=y
+    CONFIG_PACKAGE_kmod-nf-ipt=y
+    CONFIG_PACKAGE_kmod-nf-nat=y
+    CONFIG_PACKAGE_kmod-nf-reject=y
+    CONFIG_PACKAGE_kmod-nfnetlink=y
+    CONFIG_PACKAGE_kmod-ppp=y
+    CONFIG_PACKAGE_kmod-tun=y
+    CONFIG_PACKAGE_kmod-ipt-tproxy=y
 
-          # 只追加 passwall2 和 pwpackages
-          echo "src-git passwall2 https://github.com/xiaorouji/openwrt-passwall2" >> feeds.conf.default
-          echo "src-git pwpackages https://github.com/xiaorouji/openwrt-passwall-packages" >> feeds.conf.default
+    # ======================
+    # 系统工具
+    # ======================
+    CONFIG_PACKAGE_coreutils=y
+    CONFIG_PACKAGE_bash=y
+    CONFIG_PACKAGE_ca-bundle=y
+    CONFIG_PACKAGE_ca-certificates=y
+    CONFIG_PACKAGE_ip-full=y
+    CONFIG_PACKAGE_resolveip=y
+    CONFIG_PACKAGE_iptables=y
+    CONFIG_PACKAGE_iptables-mod-conntrack-extra=y
+    CONFIG_PACKAGE_iptables-mod-iprange=y
+    CONFIG_PACKAGE_iptables-mod-socket=y
+    CONFIG_PACKAGE_iptables-mod-tproxy=y
 
-          # 只更新必要的 feeds
-          ./scripts/feeds update luci packages passwall2 pwpackages
-          ./scripts/feeds install luci-app-passwall2 golang
+    # ======================
+    # Passwall2 主包
+    # ======================
+    CONFIG_PACKAGE_luci-app-passwall2=y
+    CONFIG_PACKAGE_luci-i18n-passwall2-zh-cn=y
 
-      - name: Config packages (minimal)
-        working-directory: sdk
-        run: |
-          cat > .config << 'EOF'
-          CONFIG_PACKAGE_luci-app-passwall2=y
-          CONFIG_PACKAGE_golang=y
-          EOF
-          make defconfig
+    # ======================
+    # 编译优化
+    # ======================
+    CONFIG_CCACHE=y
+    CONFIG_BUILD_LOG=y
+    CONFIG_SDK=y
+    CONFIG_STRIP_ARGS="--strip-all"
+    EOF
 
-      - name: Build passwall2 only (single-thread, log capture)
-        working-directory: sdk
-        run: |
-          mkdir -p $GITHUB_WORKSPACE/artifacts
-          set -o pipefail
-          make package/luci-app-passwall2/compile V=s -j1 2>&1 | tee $GITHUB_WORKSPACE/artifacts/passwall2_build.log
+    # 应用配置
+    make defconfig
 
-      - name: Collect ipk artifacts
-        working-directory: sdk
-        run: |
-          mkdir -p $GITHUB_WORKSPACE/artifacts
-          find bin/packages -type f -name '*.ipk' -exec cp {} $GITHUB_WORKSPACE/artifacts/ \;
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: passwall2-minimal
-          path: artifacts
+    echo "=== 配置验证 ==="
+    echo "目标架构: $(grep CONFIG_TARGET_ARCH .config || echo '未设置')"
+    echo "启用的包数量: $(grep '^CONFIG_PACKAGE.*=y' .config | wc -l)"
