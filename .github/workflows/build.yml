@@ -21,8 +21,9 @@ jobs:
         git clone https://github.com/openwrt/openwrt.git
         cd openwrt
         git checkout v24.10.4
-        # 去掉 telephony feed，避免报错
+        # 删除 telephony 和 routing feed，避免报错
         sed -i '/telephony/d' feeds.conf.default
+        sed -i '/routing/d' feeds.conf.default
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
