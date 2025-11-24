@@ -1,11 +1,11 @@
-name: Debug Build passwall2 (mt7621 release, log-capture)
+name: Minimal Build passwall2 (mt7621 release)
 
 on:
   workflow_dispatch:
 
 env:
   TZ: Asia/Shanghai
-  TERM: xterm
+  TERM: xterm   # 避免 menuconfig 报错
 
 jobs:
   build:
@@ -26,36 +26,34 @@ jobs:
         run: |
           BASE="https://downloads.openwrt.org/releases/23.05.3/targets/ramips/mt7621/"
           SDK_FILE=$(curl -fsSL ${BASE}sha256sums | grep -oE 'openwrt-sdk-[^ ]*Linux-x86_64\.tar\.xz' | head -n1)
-          echo "SDK_FILE=${SDK_FILE}"
           wget ${BASE}${SDK_FILE} -O sdk.tar.xz
           mkdir sdk && tar -xf sdk.tar.xz -C sdk --strip-components=1
 
-      - name: Setup feeds
+      - name: Setup feeds (minimal)
         working-directory: sdk
         run: |
-          # 对齐官方 feeds，避免重复
+          # 替换 luci 和 packages 行
           sed -i 's|src-git luci .*|src-git luci https://github.com/openwrt/luci;openwrt-23.05|' feeds.conf.default
           sed -i 's|src-git packages .*|src-git packages https://github.com/openwrt/packages;openwrt-23.05|' feeds.conf.default
 
-          # 第三方 feeds：passwall2 + packages
+          # 只追加 passwall2 和 pwpackages
           echo "src-git passwall2 https://github.com/xiaorouji/openwrt-passwall2" >> feeds.conf.default
           echo "src-git pwpackages https://github.com/xiaorouji/openwrt-passwall-packages" >> feeds.conf.default
 
-          ./scripts/feeds clean
-          ./scripts/feeds update -a
+          # 只更新必要的 feeds
+          ./scripts/feeds update luci packages passwall2 pwpackages
           ./scripts/feeds install luci-app-passwall2 golang
 
-      - name: Config packages (non-interactive)
+      - name: Config packages (minimal)
         working-directory: sdk
         run: |
-          # 最小化配置：只启用 passwall2 + golang
           cat > .config << 'EOF'
           CONFIG_PACKAGE_luci-app-passwall2=y
           CONFIG_PACKAGE_golang=y
           EOF
           make defconfig
 
-      - name: Build passwall2 only (V=s, -j1, log capture)
+      - name: Build passwall2 only (single-thread, log capture)
         working-directory: sdk
         run: |
           mkdir -p $GITHUB_WORKSPACE/artifacts
@@ -71,5 +69,5 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: passwall2-debug-artifacts
+          name: passwall2-minimal
           path: artifacts
