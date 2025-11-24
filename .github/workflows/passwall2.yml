@@ -1,12 +1,17 @@
-name: 编译 PassWall2 套件 (含依赖)
+name: SL-3000 固件与 PassWall2 套件编译
 
 on:
   workflow_dispatch:
 
+env:
+  REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x-24.10
+  REPO_BRANCH: 2410
+  TZ: Asia/Shanghai
+
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 120
+    timeout-minutes: 180
 
     steps:
     - name: 检查代码
@@ -23,41 +28,57 @@ jobs:
 
     - name: 克隆源码
       run: |
-        git clone --depth=1 https://github.com/padavanonly/immortalwrt-mt798x-24.10 -b 2410 openwrt
+        git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
 
-    - name: 安装 PassWall2 源码
+    - name: 配置目标为 SL-3000
+      run: |
+        cat > openwrt/.config <<'EOF'
+        CONFIG_TARGET_mediatek=y
+        CONFIG_TARGET_mediatek_filogic=y
+        CONFIG_TARGET_mediatek_filogic_DEVICE_sl3000=y
+        CONFIG_PACKAGE_luci-app-passwall2=y
+        CONFIG_PACKAGE_xray-core=y
+        CONFIG_PACKAGE_trojan=y
+        CONFIG_PACKAGE_shadowsocks-libev=y
+        CONFIG_PACKAGE_shadowsocksr-libev=y
+        CONFIG_PACKAGE_hysteria=y
+        CONFIG_PACKAGE_sing-box=y
+        CONFIG_PACKAGE_naiveproxy=y
+        CONFIG_PACKAGE_wireguard-tools=y
+        CONFIG_PACKAGE_kmod-wireguard=y
+        EOF
+
+    - name: 更新 feeds 并安装 PassWall2
       run: |
         cd openwrt
         ./scripts/feeds update -a
         ./scripts/feeds install -a
         git clone https://github.com/xiaorouji/openwrt-passwall2 package/passwall2
 
-    - name: 编译 PassWall2 及依赖
+    - name: 生成配置并安装工具链
       run: |
         cd openwrt
         make defconfig
-        make package/luci-app-passwall2/compile V=s
-        make package/xray-core/compile V=s
-        make package/trojan/compile V=s
-        make package/shadowsocks-libev/compile V=s
-        make package/shadowsocksr-libev/compile V=s
-        make package/hysteria/compile V=s
-        make package/sing-box/compile V=s
-        make package/naiveproxy/compile V=s
-        make package/wireguard-tools/compile V=s
+        make toolchain/install V=s
 
-    - name: 上传 ipk 包
+    - name: 编译固件与 PassWall2 套件
+      run: |
+        cd openwrt
+        make -j$(nproc) || make -j1 V=s
+
+    - name: 整理固件与 ipk
+      run: |
+        echo "FIRMWARE_DIR=$(find openwrt/bin/targets/mediatek/filogic -type d)" >> $GITHUB_ENV
+        echo "PKG_DIR=openwrt/bin/packages/aarch64_cortex-a53" >> $GITHUB_ENV
+
+    - name: 上传固件
       uses: actions/upload-artifact@v4
       with:
-        name: passwall2_suite_ipk
-        path: |
-          openwrt/bin/packages/*/luci/luci-app-passwall2*.ipk
-          openwrt/bin/packages/*/packages/xray-core*.ipk
-          openwrt/bin/packages/*/packages/trojan*.ipk
-          openwrt/bin/packages/*/packages/shadowsocks-libev*.ipk
-          openwrt/bin/packages/*/packages/shadowsocksr-libev*.ipk
-          openwrt/bin/packages/*/packages/hysteria*.ipk
-          openwrt/bin/packages/*/packages/sing-box*.ipk
-          openwrt/bin/packages/*/packages/naiveproxy*.ipk
-          openwrt/bin/packages/*/packages/wireguard-tools*.ipk
-        retention-days: 7
+        name: SL3000_firmware
+        path: ${{ env.FIRMWARE_DIR }}/*
+
+    - name: 上传 PassWall2 套件
+      uses: actions/upload-artifact@v4
+      with:
+        name: PassWall2_suite_ipk
+        path: ${{ env.PKG_DIR }}/*/*.ipk
