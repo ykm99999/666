@@ -39,11 +39,16 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-openwrt-dl-
 
+    - name: Clean before build
+      run: |
+        cd openwrt
+        make clean
+
     - name: Build
       run: |
         cd openwrt
         make defconfig
-        make -j2   # 控制并行数，避免内存不足
+        make -j1 V=s   # 单线程编译，输出详细日志
 
     - name: Upload firmware
       uses: actions/upload-artifact@v4
