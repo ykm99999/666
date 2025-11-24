@@ -1,0 +1,49 @@
+name: Build OpenWrt SL-3000
+
+on:
+  workflow_dispatch:   # 手动触发
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y build-essential git libncurses5-dev gawk gettext unzip file libssl-dev wget python3 ccache
+
+    - name: Get OpenWrt source
+      run: |
+        git clone https://github.com/openwrt/openwrt.git
+        cd openwrt
+        git checkout v24.10.4
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+
+    - name: Copy custom config
+      run: |
+        cp .config openwrt/.config
+
+    - name: Build
+      run: |
+        cd openwrt
+        make defconfig
+        make -j2   # 控制并行数，避免内存不足
+
+    - name: Upload firmware
+      uses: actions/upload-artifact@v4
+      with:
+        name: firmware
+        path: openwrt/bin/targets
+
+    - name: Cleanup
+      run: |
+        rm -rf openwrt/build_dir
+        rm -rf openwrt/staging_dir
