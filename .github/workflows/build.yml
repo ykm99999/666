@@ -57,8 +57,8 @@ jobs:
     - name: Build
       run: |
         cd openwrt
-        make defconfig
-        make -j1 V=s   # 单线程编译，详细日志
+        make defconfig        # 自动生成最终配置，不调用 menuconfig
+        make -j1 V=s          # 单线程编译，详细日志
 
     - name: Upload firmware
       uses: actions/upload-artifact@v4
