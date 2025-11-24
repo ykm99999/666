@@ -1,16 +1,13 @@
-name: Build passwall2 for SL3000 (ImmortalWrt 24.10 MT7981)
+name: Build Passwall2 for ImmortalWrt 24.10 (MT7981)
 
 on:
   workflow_dispatch:
     inputs:
-      immortalwrt_version:
-        description: 'ImmortalWrt Version'
-        required: true
-        default: '24.10'
-        type: choice
-        options:
-          - '24.10'
-          - '23.05'
+      use_snapshot:
+        description: '使用快照版本'
+        required: false
+        default: false
+        type: boolean
 
 env:
   TZ: Asia/Shanghai
@@ -19,10 +16,10 @@ env:
 jobs:
   build-packages:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install build dependencies
@@ -32,45 +29,69 @@ jobs:
             build-essential clang flex g++ gawk gettext git libncurses5-dev \
             libssl-dev python3-dev python3-full python3-pip python3-setuptools \
             rsync unzip zlib1g-dev file wget curl ccache cmake ninja-build \
-            libelf-dev patchelf chrpath gawk texinfo diffutils
+            libelf-dev patchelf chrpath gawk texinfo diffutils gperf
 
       - name: Download ImmortalWrt SDK for MT7981
         run: |
-          IMMORTALWRT_VERSION="${{ inputs.immortalwrt_version || '24.10' }}"
-          
-          # 使用 ImmortalWrt 的 SDK
-          if [ "$IMMORTALWRT_VERSION" = "24.10" ]; then
-            SDK_URL="https://downloads.immortalwrt.org/releases/24.10-SNAPSHOT/targets/mediatek/filogic/"
+          # 使用中科大镜像站
+          if [ "${{ inputs.use_snapshot }}" = "true" ]; then
+            echo "使用快照版本"
+            SDK_URL="https://mirrors.ustc.edu.cn/immortalwrt/snapshots/targets/mediatek/filogic/"
           else
-            SDK_URL="https://downloads.immortalwrt.org/releases/23.05-SNAPSHOT/targets/mediatek/filogic/"
+            echo "使用稳定版本 24.10"
+            SDK_URL="https://mirrors.ustc.edu.cn/immortalwrt/releases/24.10/targets/mediatek/filogic/"
           fi
-          
-          echo "下载 ImmortalWrt MT7981 SDK，版本: ${IMMORTALWRT_VERSION}"
-          echo "SDK URL: ${SDK_URL}"
+
+          echo "正在从镜像站下载 SDK..."
+          echo "URL: $SDK_URL"
           
           # 获取 SDK 文件名
-          SDK_FILE=$(curl -fsSL "${SDK_URL}sha256sums" | grep -oE 'immortalwrt-sdk-[^ ]*Linux-x86_64\.tar\.xz' | head -n1)
+          SDK_FILE=$(curl -fsSL "${SDK_URL}sha256sums" 2>/dev/null | grep -oE '(immortalwrt|openwrt)-sdk-[^ ]*Linux-x86_64\.tar\.xz' | head -n1)
           
           if [ -z "$SDK_FILE" ]; then
-            echo "❌ 无法找到 ImmortalWrt SDK 文件，尝试 openwrt-sdk"
-            SDK_FILE=$(curl -fsSL "${SDK_URL}sha256sums" | grep -oE 'openwrt-sdk-[^ ]*Linux-x86_64\.tar\.xz' | head -n1)
+            echo "❌ 无法在镜像站找到 SDK 文件，尝试官方源..."
+            if [ "${{ inputs.use_snapshot }}" = "true" ]; then
+              SDK_URL="https://downloads.immortalwrt.org/snapshots/targets/mediatek/filogic/"
+            else
+              SDK_URL="https://downloads.immortalwrt.org/releases/24.10/targets/mediatek/filogic/"
+            fi
+            SDK_FILE=$(curl -fsSL "${SDK_URL}sha256sums" | grep -oE '(immortalwrt|openwrt)-sdk-[^ ]*Linux-x86_64\.tar\.xz' | head -n1)
           fi
-          
+
           if [ -z "$SDK_FILE" ]; then
-            echo "❌ 仍然无法找到 SDK 文件"
+            echo "❌ 错误：无法找到 SDK 文件"
+            echo "请检查以下URL：$SDK_URL"
             exit 1
           fi
           
-          echo "下载 SDK: ${SDK_FILE}"
+          echo "找到 SDK 文件: $SDK_FILE"
+          echo "下载地址: ${SDK_URL}${SDK_FILE}"
+          
+          # 下载并验证文件
           wget --progress=dot:giga "${SDK_URL}${SDK_FILE}" -O sdk.tar.xz
+          
+          if [ ! -s sdk.tar.xz ]; then
+            echo "❌ SDK 下载失败或文件为空"
+            exit 1
+          fi
+          
+          echo "文件大小: $(du -h sdk.tar.xz | cut -f1)"
+          
+          # 解压 SDK
           mkdir -p sdk
           tar -xf sdk.tar.xz -C sdk --strip-components=1
-          echo "IMMORTALWRT_VERSION=${IMMORTALWRT_VERSION}" >> $GITHUB_ENV
+          
+          if [ $? -ne 0 ]; then
+            echo "❌ SDK 解压失败"
+            exit 1
+          fi
+          
+          echo "✅ SDK 准备完成"
 
       - name: Setup feeds for ImmortalWrt
         working-directory: sdk
         run: |
-          # 创建 feeds 配置 - 使用 ImmortalWrt 的源
+          # 创建优化的 feeds 配置
           cat > feeds.conf.default << 'EOF'
           src-git packages https://github.com/immortalwrt/packages;openwrt-24.10
           src-git luci https://github.com/immortalwrt/luci;openwrt-24.10
@@ -79,86 +100,127 @@ jobs:
           src-git pwpackages https://github.com/xiaorouji/openwrt-passwall-packages
           EOF
 
-          echo "=== 更新 feeds ==="
+          echo "=== 开始更新 feeds ==="
           ./scripts/feeds update -a
           
-          echo "=== 安装基础包 ==="
+          echo "=== 安装基础软件包 ==="
           ./scripts/feeds install -a -p packages
           ./scripts/feeds install -a -p luci
           
-          echo "=== 安装 passwall2 相关包 ==="
+          echo "=== 安装 Passwall2 相关包 ==="
           ./scripts/feeds install -a -p passwall2
           ./scripts/feeds install -a -p pwpackages
           
           # 显式安装关键包
+          echo "=== 安装核心依赖包 ==="
           ./scripts/feeds install luci-app-passwall2
           ./scripts/feeds install golang
           ./scripts/feeds install coreutils-nohup
+          ./scripts/feeds install libopenssl
+          ./scripts/feeds install libpcre
 
       - name: Create MT7981 package configuration
         working-directory: sdk
         run: |
-          # 创建针对 MT7981 的配置
+          # 创建针对 MT7981 的完整配置
           cat > .config << 'EOF'
+          # ======================
           # 目标架构配置 - MT7981
+          # ======================
           CONFIG_TARGET_mediatek=y
           CONFIG_TARGET_mediatek_filogic=y
-          
+          CONFIG_TARGET_mediatek_filogic_DEVICE_sl3000=y
+
+          # ======================
           # 工具链配置
+          # ======================
           CONFIG_TOOLCHAIN=y
           CONFIG_PACKAGE_libc=y
           CONFIG_PACKAGE_libgcc=y
           CONFIG_PACKAGE_libstdcpp=y
-          
+
+          # ======================
           # Golang 环境
+          # ======================
           CONFIG_PACKAGE_golang=y
           CONFIG_PACKAGE_golang-src=y
-          
+          CONFIG_GOLANG_EXTERNAL_BOOTSTRAP_ROOT=""
+          CONFIG_GOLANG_BUILD_CACHE_DIR="/tmp/go-build"
+
+          # ======================
           # 核心库依赖
+          # ======================
           CONFIG_PACKAGE_libopenssl=y
+          CONFIG_PACKAGE_libopenssl-conf=y
           CONFIG_PACKAGE_libpcre=y
           CONFIG_PACKAGE_zlib=y
           CONFIG_PACKAGE_libpthread=y
           CONFIG_PACKAGE_librt=y
           CONFIG_PACKAGE_libatomic=y
-          
+          CONFIG_PACKAGE_libjson-c=y
+          CONFIG_PACKAGE_libcurl=y
+
+          # ======================
           # Luci 基础
+          # ======================
           CONFIG_PACKAGE_luci-base=y
           CONFIG_PACKAGE_luci-compat=y
           CONFIG_PACKAGE_luci-lib-ipkg=y
           CONFIG_PACKAGE_luci-theme-bootstrap=y
-          
-          # 内核模块（网络相关）- MT7981 特定
+          CONFIG_PACKAGE_luci-proto-ipv6=y
+
+          # ======================
+          # 内核模块（网络相关）
+          # ======================
           CONFIG_PACKAGE_kmod-nf-conntrack=y
+          CONFIG_PACKAGE_kmod-nf-conntrack-netlink=y
           CONFIG_PACKAGE_kmod-nf-ipt=y
           CONFIG_PACKAGE_kmod-nf-nat=y
+          CONFIG_PACKAGE_kmod-nf-reject=y
+          CONFIG_PACKAGE_kmod-nfnetlink=y
           CONFIG_PACKAGE_kmod-ipt-core=y
+          CONFIG_PACKAGE_kmod-ipt-extra=y
           CONFIG_PACKAGE_kmod-tun=y
           CONFIG_PACKAGE_kmod-crypto-core=y
           CONFIG_PACKAGE_kmod-crypto-aead=y
+          CONFIG_PACKAGE_kmod-crypto-manager=y
           CONFIG_PACKAGE_kmod-ipt-tproxy=y
-          
+          CONFIG_PACKAGE_kmod-ipt-nat=y
+
+          # ======================
           # 网络工具
+          # ======================
           CONFIG_PACKAGE_iptables=y
           CONFIG_PACKAGE_iptables-mod-tproxy=y
           CONFIG_PACKAGE_iptables-mod-extra=y
+          CONFIG_PACKAGE_iptables-mod-iprange=y
+          CONFIG_PACKAGE_iptables-mod-socket=y
           CONFIG_PACKAGE_ip-full=y
+          CONFIG_PACKAGE_ipset=y
           CONFIG_PACKAGE_resolveip=y
-          
+          CONFIG_PACKAGE_dnsmasq-full=y
+
+          # ======================
           # 系统工具
+          # ======================
           CONFIG_PACKAGE_coreutils=y
           CONFIG_PACKAGE_coreutils-nohup=y
           CONFIG_PACKAGE_bash=y
           CONFIG_PACKAGE_ca-bundle=y
           CONFIG_PACKAGE_ca-certificates=y
-          
+
+          # ======================
           # Passwall2 主包
+          # ======================
           CONFIG_PACKAGE_luci-app-passwall2=y
           CONFIG_PACKAGE_luci-i18n-passwall2-zh-cn=y
-          
+
+          # ======================
           # 编译优化
+          # ======================
           CONFIG_CCACHE=y
           CONFIG_BUILD_LOG=y
+          CONFIG_SDK=y
           EOF
 
           # 应用配置
@@ -166,10 +228,19 @@ jobs:
           make defconfig
           
           echo "=== 配置摘要 ==="
-          echo "目标架构: mediatek/filogic (MT7981)"
+          echo "目标架构: $(grep 'CONFIG_TARGET_ARCH' .config || echo 'mediatek/filogic')"
           echo "启用的包数量: $(grep '^CONFIG_PACKAGE.*=y' .config | wc -l)"
 
-      - name: Build dependencies
+      - name: Check dependencies
+        working-directory: sdk
+        run: |
+          echo "=== 检查依赖关系 ==="
+          make package/luci-app-passwall2/check V=sc || true
+          
+          echo "=== 依赖预览 ==="
+          make -s preview 2>/dev/null | grep -E "(passwall|FAIL)" || echo "依赖检查完成"
+
+      - name: Build dependencies first
         working-directory: sdk
         run: |
           set -e
@@ -178,14 +249,17 @@ jobs:
           # 编译工具链
           make toolchain/install -j$(nproc) V=sc
           
-          # 编译核心库
+          echo "=== 编译核心库 ==="
           make package/libopenssl/compile package/libpcre/compile package/zlib/compile -j$(nproc) V=sc
           
-          # 编译 Golang
+          echo "=== 编译 Golang ==="
           make package/golang/compile -j$(nproc) V=sc
           
-          # 编译 Luci 基础
+          echo "=== 编译 Luci 基础 ==="
           make package/luci-base/compile package/luci-compat/compile -j$(nproc) V=sc
+          
+          echo "=== 编译网络核心 ==="
+          make package/iptables/compile package/ipset/compile -j$(nproc) V=sc
 
       - name: Build passwall2 package
         working-directory: sdk
@@ -194,11 +268,18 @@ jobs:
           mkdir -p $GITHUB_WORKSPACE/artifacts
           
           echo "=== 编译 passwall2 主包 ==="
-          # 编译 passwall2
-          make package/luci-app-passwall2/compile -j$(nproc) V=s 2>&1 | tee $GITHUB_WORKSPACE/artifacts/passwall2_build.log || {
+          # 首先尝试并行编译
+          if make package/luci-app-passwall2/compile -j$(nproc) V=s 2>&1 | tee $GITHUB_WORKSPACE/artifacts/passwall2_build.log; then
+            echo "✅ 并行编译成功"
+          else
             echo "⚠️ 并行编译失败，尝试单线程编译..."
-            make package/luci-app-passwall2/compile -j1 V=s 2>&1 | tee $GITHUB_WORKSPACE/artifacts/passwall2_build_single.log
-          }
+            if make package/luci-app-passwall2/compile -j1 V=s 2>&1 | tee $GITHUB_WORKSPACE/artifacts/passwall2_build_single.log; then
+              echo "✅ 单线程编译成功"
+            else
+              echo "❌ 编译失败"
+              exit 1
+            fi
+          fi
 
       - name: Collect and verify packages
         working-directory: sdk
@@ -211,7 +292,8 @@ jobs:
           # 查找所有 IPK 文件
           find bin -name "*.ipk" -type f | while read file; do
             filename=$(basename "$file")
-            echo "📦 找到: $filename"
+            size=$(du -h "$file" | cut -f1)
+            echo "📦 找到: $filename ($size)"
             cp "$file" $GITHUB_WORKSPACE/artifacts/packages/
           done
           
@@ -219,12 +301,20 @@ jobs:
           ipk_count=$(find $GITHUB_WORKSPACE/artifacts/packages -name "*.ipk" | wc -l)
           echo "生成的 IPK 包数量: $ipk_count"
           
+          # 列出 passwall2 相关包
+          echo "=== Passwall2 相关包 ==="
+          find $GITHUB_WORKSPACE/artifacts/packages -name "*passwall*" -o -name "*pw2*" | while read file; do
+            echo "🔸 $(basename "$file")"
+          done
+          
           if [ "$ipk_count" -eq 0 ]; then
             echo "❌ 没有生成任何软件包"
+            echo "请检查编译日志中的错误信息"
             exit 1
           fi
           
-          # 列出文件详情
+          # 显示文件详情
+          echo "=== 包列表详情 ==="
           ls -la $GITHUB_WORKSPACE/artifacts/packages/
           echo "PACKAGES_BUILT=true" >> $GITHUB_ENV
 
@@ -232,9 +322,10 @@ jobs:
         if: env.PACKAGES_BUILT == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: passwall2-packages-mt7981-immortalwrt
+          name: passwall2-packages-mt7981
           path: artifacts/packages/
           retention-days: 30
+          overwrite: true
 
       - name: Upload build logs
         uses: actions/upload-artifact@v4
@@ -242,16 +333,25 @@ jobs:
           name: build-logs-mt7981
           path: artifacts/
           retention-days: 7
+          overwrite: true
 
       - name: Build success notification
         if: success() && env.PACKAGES_BUILT == 'true'
         run: |
-          echo "🎉 passwall2 软件包编译成功！"
+          echo "🎉 Passwall2 软件包编译成功！"
+          echo "========================================"
           echo "架构: ImmortalWrt 24.10 + MT7981"
+          echo "设备: 司络 SL-3000"
           echo "生成的包已上传到 Artifacts"
+          echo "========================================"
 
       - name: Build failure notification
         if: failure()
         run: |
-          echo "❌ 编译失败，请检查日志"
-          echo "详细日志已上传到 Artifacts"
+          echo "❌ 编译失败"
+          echo "请检查以下可能的原因："
+          echo "1. SDK 下载或解压失败"
+          echo "2. 依赖包缺失"
+          echo "3. 网络连接问题"
+          echo "4. 编译配置错误"
+          echo "详细日志已上传到 Artifacts: build-logs-mt7981"
